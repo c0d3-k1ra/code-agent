@@ -231,29 +231,36 @@ Be thorough and consider all necessary steps."""
         """Decide what action to take next based on the goal, plan, and completed actions."""
         completed_summary = ""
         if completed_actions:
-            completed_summary = "\n\nCompleted Actions:\n"
+            completed_summary = "\n\nCOMPLETED ACTIONS AND RESULTS:\n"
             for i, action_info in enumerate(completed_actions, 1):
-                completed_summary += f"{i}. {action_info['action']}\n"
+                action = action_info['action']
+                result_preview = str(action_info['result'])[:100] + "..." if len(str(action_info['result'])) > 100 else str(action_info['result'])
+                completed_summary += f"{i}. ✅ {action}\n   Result: {result_preview}\n"
 
-        action_prompt = f"""Goal: {goal}
-Plan: {plan}{completed_summary}
+        action_prompt = f"""GOAL: {goal}
 
-Based on the goal, plan, and what has already been completed, what is the next specific action you should take?
+ORIGINAL PLAN:
+{plan}
+{completed_summary}
 
-IMPORTANT: Do not repeat actions that have already been completed. Move to the next logical step in the plan.
+CRITICAL INSTRUCTIONS:
+1. Look at what has ALREADY been completed above
+2. Determine if the goal is fully achieved based on completed actions
+3. If goal is achieved, respond with "GOAL_COMPLETE: [brief summary of what was accomplished]"
+4. If goal is NOT achieved, identify the NEXT logical step from the original plan that hasn't been done yet
+5. DO NOT repeat any action that has already been completed successfully
 
-If the goal is complete, respond with "GOAL_COMPLETE: [summary]"
-Otherwise, respond with a brief description of the next action to take."""
+What should happen next?"""
 
         temp_history = [
-            {"role": "system", "content": "You are executing a plan. Decide the next specific action based on what's already been done."},
+            {"role": "system", "content": "You are a goal execution agent. Analyze completed work and decide if goal is complete or what specific action comes next. Be decisive and avoid repeating completed actions."},
             {"role": "user", "content": action_prompt}
         ]
 
         response = await self.client.chat.completions.create(
             model=self.model_name,
             messages=temp_history,
-            temperature=0.2,
+            temperature=0.1,  # Very low temperature for consistent decisions
             extra_body={
                 "litellm_session_id": self.session_id
             }
