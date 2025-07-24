@@ -13,7 +13,7 @@ class CLI:
     def print_welcome(self):
         """Print welcome message and setup information."""
         self.logger.welcome(
-            self.chatbot.model_name,
+            self.chatbot.get_model_name(),
             self.chatbot.get_session_id(),
             self.chatbot.get_available_tools()
         )

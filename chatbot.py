@@ -1,58 +1,50 @@
-import os
-import asyncio
 import json
-import uuid
-from openai import AsyncOpenAI
-from dotenv import load_dotenv
+from config import Config
+from session import Session
+from api_client import OpenAIClient
+from goal_executor import GoalExecutor
 from tools import FileTools
 from logger import NexusLogger
 
-# Load environment variables
-load_dotenv()
-
 
 class Chatbot:
-    """Core chatbot logic and API communication."""
+    """Main chatbot orchestrator - coordinates between different modules."""
 
     def __init__(self):
-        self.client = AsyncOpenAI(
-            api_key=os.getenv('OPENAI_API_KEY'),
-            base_url=os.getenv('API_URL')
-        )
-        self.model_name = os.getenv('MODEL_NAME', 'gpt-3.5-turbo')
-        self.conversation_history = []
+        self.config = Config()
+        self.session = Session()
+        self.api_client = OpenAIClient(self.config)
         self.file_tools = FileTools()
-        self.tools = FileTools.get_tool_schemas()
-        self.session_id = str(uuid.uuid4())  # Generate unique session ID for LiteLLM tracking
         self.logger = NexusLogger()
+        self.goal_executor = GoalExecutor(
+            self.api_client,
+            self.file_tools,
+            self.logger,
+            self.config
+        )
+        self.tools = FileTools.get_tool_schemas()
 
     async def send_message(self, message):
         """Send a message to the chatbot and get a response."""
-        # Add user message to conversation history
-        self.conversation_history.append({"role": "user", "content": message})
+        # Add user message to session
+        self.session.add_user_message(message)
 
         try:
             # Send request to API with tools
-            response = await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=self.conversation_history,
-                temperature=0.7,
-                tools=self.tools,
-                tool_choice="auto",
-                extra_body={
-                    "litellm_session_id": self.session_id  # LiteLLM session tracking
-                }
+            response = await self.api_client.send_chat_completion(
+                messages=self.session.get_conversation_history(),
+                session_id=self.session.session_id,
+                tools=self.tools
             )
 
             # Get assistant's message
             assistant_message = response.choices[0].message
 
-            # Add assistant's response to conversation history
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": assistant_message.content,
-                "tool_calls": assistant_message.tool_calls
-            })
+            # Add assistant's response to session
+            self.session.add_assistant_message(
+                assistant_message.content,
+                assistant_message.tool_calls
+            )
 
             # Check if there are tool calls
             if assistant_message.tool_calls:
@@ -72,55 +64,52 @@ class Chatbot:
             result = self.file_tools.execute_tool(tool_call)
 
             # Log tool usage with result using logger
-            if isinstance(result, dict) and 'success' in result:
-                if result['success']:
-                    # Show successful result concisely
-                    if 'current_directory' in result:
-                        self.logger.tool_execution(tool_call.function.name, result['current_directory'])
-                    elif 'files' in result:
-                        file_count = len(result['files'])
-                        self.logger.tool_execution(tool_call.function.name, f"{file_count} items")
-                    elif 'content' in result:
-                        content_preview = result['content'][:50] + "..." if len(result['content']) > 50 else result['content']
-                        self.logger.tool_execution(tool_call.function.name, content_preview)
-                    elif 'message' in result:
-                        self.logger.tool_execution(tool_call.function.name, result['message'])
-                    else:
-                        self.logger.tool_execution(tool_call.function.name, "Success")
-                else:
-                    error_msg = f"Error: {result.get('error', 'Unknown error')}"
-                    self.logger.tool_execution(tool_call.function.name, error_msg)
-            else:
-                result_preview = str(result)[:50] + "..." if len(str(result)) > 50 else str(result)
-                self.logger.tool_execution(tool_call.function.name, result_preview)
+            self._log_tool_execution(tool_call, result)
 
-            # Add tool result to conversation history
+            # Add tool result
             tool_results.append({
                 "tool_call_id": tool_call.id,
                 "role": "tool",
                 "content": json.dumps(result)
             })
 
-        # Add tool results to conversation history
-        self.conversation_history.extend(tool_results)
+        # Add tool results to session
+        self.session.add_tool_results(tool_results)
 
         # Send follow-up request with tool results
-        follow_up_response = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=self.conversation_history,
-            temperature=0.7,
-            extra_body={
-                "litellm_session_id": self.session_id  # Same session ID for continuity
-            }
+        follow_up_response = await self.api_client.send_follow_up_request(
+            messages=self.session.get_conversation_history(),
+            session_id=self.session.session_id
         )
 
         final_message = follow_up_response.choices[0].message
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": final_message.content
-        })
+        self.session.add_assistant_message(final_message.content)
 
         return final_message.content
+
+    def _log_tool_execution(self, tool_call, result):
+        """Log tool execution with result."""
+        if isinstance(result, dict) and 'success' in result:
+            if result['success']:
+                # Show successful result concisely
+                if 'current_directory' in result:
+                    self.logger.tool_execution(tool_call.function.name, result['current_directory'])
+                elif 'files' in result:
+                    file_count = len(result['files'])
+                    self.logger.tool_execution(tool_call.function.name, f"{file_count} items")
+                elif 'content' in result:
+                    content_preview = result['content'][:50] + "..." if len(result['content']) > 50 else result['content']
+                    self.logger.tool_execution(tool_call.function.name, content_preview)
+                elif 'message' in result:
+                    self.logger.tool_execution(tool_call.function.name, result['message'])
+                else:
+                    self.logger.tool_execution(tool_call.function.name, "Success")
+            else:
+                error_msg = f"Error: {result.get('error', 'Unknown error')}"
+                self.logger.tool_execution(tool_call.function.name, error_msg)
+        else:
+            result_preview = str(result)[:50] + "..." if len(str(result)) > 50 else str(result)
+            self.logger.tool_execution(tool_call.function.name, result_preview)
 
     def get_available_tools(self):
         """Get list of available tool names."""
@@ -128,157 +117,33 @@ class Chatbot:
 
     def clear_history(self):
         """Clear conversation history."""
-        self.conversation_history = []
+        self.session.clear_history()
 
     def get_session_id(self):
         """Get the current session ID."""
-        return self.session_id
+        return self.session.session_id
 
     def reset_session(self):
         """Reset session with new ID and clear history."""
-        self.session_id = str(uuid.uuid4())
-        self.conversation_history = []
-        return self.session_id
+        return self.session.reset_session()
 
     def get_session_info(self):
         """Get session information."""
-        return {
-            "session_id": self.session_id,
-            "message_count": len([msg for msg in self.conversation_history if msg["role"] in ["user", "assistant"]]),
-            "tool_calls_count": len([msg for msg in self.conversation_history if msg["role"] == "tool"])
-        }
+        return self.session.get_session_info()
+
+    def get_model_name(self):
+        """Get the current model name."""
+        return self.api_client.get_model_name()
 
     async def run_goal(self, goal):
-        """Run an autonomous goal-oriented task with simplified execution."""
-        # Clear any existing conversation history for clean goal execution
-        original_history = self.conversation_history.copy()
-        self.conversation_history = []
-
-        self.logger.goal_start(goal)
+        """Run an autonomous goal-oriented task using the goal executor."""
+        # Backup current session history
+        original_history = self.session.backup_history()
 
         try:
-            # 1. PLAN ONCE - Create comprehensive plan
-            plan = await self._create_master_plan(goal)
-            self.logger.goal_plan(plan)
-            self.logger.goal_executing()
-
-            # 2. EXECUTE UNTIL DONE
-            max_actions = 20  # Prevent infinite loops
-            action_count = 0
-            completed_actions = []  # Track what's been done
-
-            while action_count < max_actions:
-                # Decide next action with context of what's been completed
-                next_action = await self._decide_next_action(goal, plan, completed_actions)
-
-                # Check if goal is complete
-                if "GOAL_COMPLETE" in next_action.upper() or "FINISHED" in next_action.upper():
-                    self.logger.goal_complete(next_action)
-                    return next_action
-
-                # Log and execute action
-                self.logger.goal_action(next_action)
-                result = await self._execute_action(next_action)
-
-                # Track completed action
-                completed_actions.append({
-                    "action": next_action,
-                    "result": result
-                })
-
-                action_count += 1
-
-            error_msg = f"Goal execution reached maximum actions ({max_actions})"
-            self.logger.error(error_msg)
-            return error_msg
-
-        except Exception as e:
-            error_msg = f"Goal execution failed: {str(e)}"
-            self.logger.error(error_msg)
-            return error_msg
-
+            # Use the dedicated goal executor
+            result = await self.goal_executor.execute_goal(goal, self.session.session_id)
+            return result
         finally:
             # Restore original conversation history
-            self.conversation_history = original_history
-
-    async def _create_master_plan(self, goal):
-        """Create a comprehensive plan for achieving the goal."""
-        plan_prompt = f"""Create a comprehensive plan to achieve this goal: {goal}
-
-Available tools: {', '.join(self.get_available_tools())}
-
-Create a detailed, step-by-step plan that will accomplish the goal completely.
-List all the specific actions needed in order.
-Be thorough and consider all necessary steps."""
-
-        temp_history = [
-            {"role": "system", "content": "You are an autonomous AI agent. Create comprehensive plans to achieve goals."},
-            {"role": "user", "content": plan_prompt}
-        ]
-
-        response = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=temp_history,
-            temperature=0.3,
-            extra_body={
-                "litellm_session_id": self.session_id
-            }
-        )
-
-        return response.choices[0].message.content
-
-    async def _decide_next_action(self, goal, plan, completed_actions):
-        """Decide what action to take next based on the goal, plan, and completed actions."""
-        completed_summary = ""
-        if completed_actions:
-            completed_summary = "\n\nCOMPLETED ACTIONS AND RESULTS:\n"
-            for i, action_info in enumerate(completed_actions, 1):
-                action = action_info['action']
-                result_preview = str(action_info['result'])[:100] + "..." if len(str(action_info['result'])) > 100 else str(action_info['result'])
-                completed_summary += f"{i}. ✅ {action}\n   Result: {result_preview}\n"
-
-        action_prompt = f"""GOAL: {goal}
-
-ORIGINAL PLAN:
-{plan}
-{completed_summary}
-
-CRITICAL INSTRUCTIONS:
-1. Look at what has ALREADY been completed above
-2. Determine if the goal is fully achieved based on completed actions
-3. If goal is achieved, respond with "GOAL_COMPLETE: [brief summary of what was accomplished]"
-4. If goal is NOT achieved, identify the NEXT logical step from the original plan that hasn't been done yet
-5. DO NOT repeat any action that has already been completed successfully
-
-What should happen next?"""
-
-        temp_history = [
-            {"role": "system", "content": "You are a goal execution agent. Analyze completed work and decide if goal is complete or what specific action comes next. Be decisive and avoid repeating completed actions."},
-            {"role": "user", "content": action_prompt}
-        ]
-
-        response = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=temp_history,
-            temperature=0.1,  # Very low temperature for consistent decisions
-            extra_body={
-                "litellm_session_id": self.session_id
-            }
-        )
-
-        return response.choices[0].message.content
-
-    async def _execute_action(self, action):
-        """Execute a specific action using available tools."""
-        execute_prompt = f"""Execute this action: {action}
-
-Use the available tools to complete this action.
-Be direct and efficient."""
-
-        # Add system context for execution
-        self.conversation_history.append({"role": "system", "content": "Execute the requested action using available tools."})
-
-        # Execute the action
-        result = await self.send_message(execute_prompt)
-
-        return result
+            self.session.restore_history(original_history)
