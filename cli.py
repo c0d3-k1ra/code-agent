@@ -14,6 +14,7 @@ class CLI:
         print("Type 'quit' to exit")
         print("-" * 50)
         print(f"Using model: {self.chatbot.model_name}")
+        print(f"Session ID: {self.chatbot.get_session_id()}")
         print(f"Available tools: {self.chatbot.get_available_tools()}")
         print("-" * 50)
 
@@ -42,6 +43,15 @@ class CLI:
                     self.print_help()
                     continue
 
+                if user_input.lower() == 'session':
+                    self.print_session_info()
+                    continue
+
+                if user_input.lower() == 'reset':
+                    new_session_id = self.chatbot.reset_session()
+                    print(f"Session reset! New session ID: {new_session_id}")
+                    continue
+
                 if user_input:
                     response = await self.chatbot.send_message(user_input)
                     print("\nBot:", response)
@@ -55,14 +65,25 @@ class CLI:
                 print(f"\nError: {str(e)}")
                 print("Please try again or type 'quit' to exit.")
 
+    def print_session_info(self):
+        """Print current session information."""
+        info = self.chatbot.get_session_info()
+        print(f"\nSession Information:")
+        print(f"  Session ID: {info['session_id']}")
+        print(f"  Messages: {info['message_count']}")
+        print(f"  Tool calls: {info['tool_calls_count']}")
+
     def print_help(self):
         """Print help information."""
         print("\nAvailable commands:")
-        print("  quit  - Exit the chatbot")
-        print("  clear - Clear conversation history")
-        print("  help  - Show this help message")
+        print("  quit    - Exit the chatbot")
+        print("  clear   - Clear conversation history")
+        print("  session - Show session information")
+        print("  reset   - Reset session (new ID + clear history)")
+        print("  help    - Show this help message")
         print(f"\nAvailable tools: {', '.join(self.chatbot.get_available_tools())}")
         print("\nYou can ask the chatbot to read or write files within the current directory.")
+        print("All requests are grouped by session ID for tracking in LiteLLM.")
 
 
 async def main():

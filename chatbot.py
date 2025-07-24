@@ -1,6 +1,7 @@
 import os
 import asyncio
 import json
+import uuid
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from tools import FileTools
@@ -21,6 +22,7 @@ class Chatbot:
         self.conversation_history = []
         self.file_tools = FileTools()
         self.tools = FileTools.get_tool_schemas()
+        self.session_id = str(uuid.uuid4())  # Generate unique session ID for LiteLLM tracking
 
     async def send_message(self, message):
         """Send a message to the chatbot and get a response."""
@@ -34,7 +36,10 @@ class Chatbot:
                 messages=self.conversation_history,
                 temperature=0.7,
                 tools=self.tools,
-                tool_choice="auto"
+                tool_choice="auto",
+                extra_body={
+                    "litellm_session_id": self.session_id  # LiteLLM session tracking
+                }
             )
 
             # Get assistant's message
@@ -94,6 +99,9 @@ class Chatbot:
             model=self.model_name,
             messages=self.conversation_history,
             temperature=0.7,
+            extra_body={
+                "litellm_session_id": self.session_id  # Same session ID for continuity
+            }
         )
 
         final_message = follow_up_response.choices[0].message
@@ -112,3 +120,21 @@ class Chatbot:
     def clear_history(self):
         """Clear conversation history."""
         self.conversation_history = []
+
+    def get_session_id(self):
+        """Get the current session ID."""
+        return self.session_id
+
+    def reset_session(self):
+        """Reset session with new ID and clear history."""
+        self.session_id = str(uuid.uuid4())
+        self.conversation_history = []
+        return self.session_id
+
+    def get_session_info(self):
+        """Get session information."""
+        return {
+            "session_id": self.session_id,
+            "message_count": len([msg for msg in self.conversation_history if msg["role"] in ["user", "assistant"]]),
+            "tool_calls_count": len([msg for msg in self.conversation_history if msg["role"] == "tool"])
+        }
