@@ -52,6 +52,15 @@ class CLI:
                     print(f"Session reset! New session ID: {new_session_id}")
                     continue
 
+                if user_input.lower().startswith('goal '):
+                    goal_text = user_input[5:].strip()  # Remove 'goal ' prefix
+                    if goal_text:
+                        result = await self.chatbot.run_goal(goal_text)
+                        print(f"\n🎯 Goal Result: {result}")
+                    else:
+                        print("Please provide a goal after 'goal '. Example: goal Summarize all .md files into summary.md")
+                    continue
+
                 if user_input:
                     response = await self.chatbot.send_message(user_input)
                     print("\nBot:", response)
@@ -76,13 +85,15 @@ class CLI:
     def print_help(self):
         """Print help information."""
         print("\nAvailable commands:")
-        print("  quit    - Exit the chatbot")
-        print("  clear   - Clear conversation history")
-        print("  session - Show session information")
-        print("  reset   - Reset session (new ID + clear history)")
-        print("  help    - Show this help message")
+        print("  quit       - Exit the chatbot")
+        print("  clear      - Clear conversation history")
+        print("  session    - Show session information")
+        print("  reset      - Reset session (new ID + clear history)")
+        print("  goal <text> - Run autonomous goal (e.g., 'goal Summarize all .md files into summary.md')")
+        print("  help       - Show this help message")
         print(f"\nAvailable tools: {', '.join(self.chatbot.get_available_tools())}")
         print("\nYou can ask the chatbot to read or write files within the current directory.")
+        print("Use 'goal' command for autonomous task execution with automatic tool usage.")
         print("All requests are grouped by session ID for tracking in LiteLLM.")
 
 
