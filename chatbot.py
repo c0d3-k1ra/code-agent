@@ -60,7 +60,7 @@ class Chatbot:
             }
         ]
 
-    def _is_safe_path(self, file_path):
+    def _safe_guard_ai(self, file_path):
         """Check if the file path is within the current directory for security."""
         try:
             # Convert to absolute path and resolve any .. or . components
@@ -72,7 +72,7 @@ class Chatbot:
 
     def _read_file(self, file_path):
         """Read file contents with safety checks."""
-        if not self._is_safe_path(file_path):
+        if not self._safe_guard_ai(file_path):
             return {"error": "Access denied: File path is outside current directory"}
 
         try:
@@ -108,7 +108,7 @@ class Chatbot:
             elif not isinstance(content, str):
                 content = str(content)
 
-            if not self._is_safe_path(file_path):
+            if not self._safe_guard_ai(file_path):
                 return {"error": "Access denied: File path is outside current directory"}
 
             path = Path(file_path)
