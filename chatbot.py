@@ -5,6 +5,7 @@ import uuid
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from tools import FileTools
+from logger import NexusLogger
 
 # Load environment variables
 load_dotenv()
@@ -23,6 +24,7 @@ class Chatbot:
         self.file_tools = FileTools()
         self.tools = FileTools.get_tool_schemas()
         self.session_id = str(uuid.uuid4())  # Generate unique session ID for LiteLLM tracking
+        self.logger = NexusLogger()
 
     async def send_message(self, message):
         """Send a message to the chatbot and get a response."""
@@ -69,26 +71,28 @@ class Chatbot:
             # Execute the tool
             result = self.file_tools.execute_tool(tool_call)
 
-            # Log tool usage with result
+            # Log tool usage with result using logger
             if isinstance(result, dict) and 'success' in result:
                 if result['success']:
                     # Show successful result concisely
                     if 'current_directory' in result:
-                        print(f"🔧 {tool_call.function.name} → {result['current_directory']}")
+                        self.logger.tool_execution(tool_call.function.name, result['current_directory'])
                     elif 'files' in result:
                         file_count = len(result['files'])
-                        print(f"🔧 {tool_call.function.name} → {file_count} items")
+                        self.logger.tool_execution(tool_call.function.name, f"{file_count} items")
                     elif 'content' in result:
                         content_preview = result['content'][:50] + "..." if len(result['content']) > 50 else result['content']
-                        print(f"🔧 {tool_call.function.name} → {content_preview}")
+                        self.logger.tool_execution(tool_call.function.name, content_preview)
                     elif 'message' in result:
-                        print(f"🔧 {tool_call.function.name} → {result['message']}")
+                        self.logger.tool_execution(tool_call.function.name, result['message'])
                     else:
-                        print(f"🔧 {tool_call.function.name} → Success")
+                        self.logger.tool_execution(tool_call.function.name, "Success")
                 else:
-                    print(f"🔧 {tool_call.function.name} → Error: {result.get('error', 'Unknown error')}")
+                    error_msg = f"Error: {result.get('error', 'Unknown error')}"
+                    self.logger.tool_execution(tool_call.function.name, error_msg)
             else:
-                print(f"🔧 {tool_call.function.name} → {str(result)[:50]}...")
+                result_preview = str(result)[:50] + "..." if len(str(result)) > 50 else str(result)
+                self.logger.tool_execution(tool_call.function.name, result_preview)
 
             # Add tool result to conversation history
             tool_results.append({
@@ -150,13 +154,13 @@ class Chatbot:
         original_history = self.conversation_history.copy()
         self.conversation_history = []
 
-        print(f"\n🎯 Goal: {goal}")
+        self.logger.goal_start(goal)
 
         try:
             # 1. PLAN ONCE - Create comprehensive plan
             plan = await self._create_master_plan(goal)
-            print(f"📋 Plan:\n{plan}")
-            print("⚡ Executing...")
+            self.logger.goal_plan(plan)
+            self.logger.goal_executing()
 
             # 2. EXECUTE UNTIL DONE
             max_actions = 20  # Prevent infinite loops
@@ -169,11 +173,11 @@ class Chatbot:
 
                 # Check if goal is complete
                 if "GOAL_COMPLETE" in next_action.upper() or "FINISHED" in next_action.upper():
-                    print("✅ Goal completed!")
+                    self.logger.goal_complete(next_action)
                     return next_action
 
                 # Log and execute action
-                print(f"🔄 {next_action}")
+                self.logger.goal_action(next_action)
                 result = await self._execute_action(next_action)
 
                 # Track completed action
@@ -184,11 +188,14 @@ class Chatbot:
 
                 action_count += 1
 
-            return f"Goal execution reached maximum actions ({max_actions})"
+            error_msg = f"Goal execution reached maximum actions ({max_actions})"
+            self.logger.error(error_msg)
+            return error_msg
 
         except Exception as e:
-            print(f"❌ Goal execution failed: {str(e)}")
-            return f"Goal execution failed: {str(e)}"
+            error_msg = f"Goal execution failed: {str(e)}"
+            self.logger.error(error_msg)
+            return error_msg
 
         finally:
             # Restore original conversation history

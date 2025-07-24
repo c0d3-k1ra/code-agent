@@ -1,5 +1,6 @@
 import asyncio
 from chatbot import Chatbot
+from logger import NexusLogger
 
 
 class CLI:
@@ -7,20 +8,19 @@ class CLI:
 
     def __init__(self):
         self.chatbot = Chatbot()
+        self.logger = NexusLogger()
 
     def print_welcome(self):
         """Print welcome message and setup information."""
-        print("Welcome to the AI Chatbot with Tools!")
-        print("Type 'quit' to exit")
-        print("-" * 50)
-        print(f"Using model: {self.chatbot.model_name}")
-        print(f"Session ID: {self.chatbot.get_session_id()}")
-        print(f"Available tools: {self.chatbot.get_available_tools()}")
-        print("-" * 50)
+        self.logger.welcome(
+            self.chatbot.model_name,
+            self.chatbot.get_session_id(),
+            self.chatbot.get_available_tools()
+        )
 
     def print_goodbye(self):
         """Print goodbye message."""
-        print("\nGoodbye!")
+        self.logger.goodbye()
 
     async def run(self):
         """Main application loop."""
@@ -36,7 +36,7 @@ class CLI:
 
                 if user_input.lower() == 'clear':
                     self.chatbot.clear_history()
-                    print("Conversation history cleared!")
+                    self.logger.success("Conversation history cleared!")
                     continue
 
                 if user_input.lower() == 'help':
@@ -49,52 +49,49 @@ class CLI:
 
                 if user_input.lower() == 'reset':
                     new_session_id = self.chatbot.reset_session()
-                    print(f"Session reset! New session ID: {new_session_id}")
+                    self.logger.success(f"Session reset! New session ID: {new_session_id}")
                     continue
 
                 if user_input.lower().startswith('goal '):
                     goal_text = user_input[5:].strip()  # Remove 'goal ' prefix
                     if goal_text:
+                        self.logger.user_input(user_input)
                         result = await self.chatbot.run_goal(goal_text)
-                        print(f"\n🎯 Goal Result: {result}")
+                        self.logger.info(f"Goal Result: {result}")
                     else:
-                        print("Please provide a goal after 'goal '. Example: goal Summarize all .md files into summary.md")
+                        self.logger.warning("Please provide a goal after 'goal '. Example: goal Summarize all .md files into summary.md")
                     continue
 
                 if user_input:
+                    self.logger.user_input(user_input)
                     response = await self.chatbot.send_message(user_input)
-                    print("\nBot:", response)
+                    self.logger.bot_response(response)
                 else:
-                    print("Please enter a message or type 'quit' to exit.")
+                    self.logger.warning("Please enter a message or type 'quit' to exit.")
 
             except KeyboardInterrupt:
                 self.print_goodbye()
                 break
             except Exception as e:
-                print(f"\nError: {str(e)}")
-                print("Please try again or type 'quit' to exit.")
+                self.logger.error(str(e))
+                self.logger.warning("Please try again or type 'quit' to exit.")
 
     def print_session_info(self):
         """Print current session information."""
         info = self.chatbot.get_session_info()
-        print(f"\nSession Information:")
-        print(f"  Session ID: {info['session_id']}")
-        print(f"  Messages: {info['message_count']}")
-        print(f"  Tool calls: {info['tool_calls_count']}")
+        self.logger.session_info(info)
 
     def print_help(self):
         """Print help information."""
-        print("\nAvailable commands:")
-        print("  quit       - Exit the chatbot")
-        print("  clear      - Clear conversation history")
-        print("  session    - Show session information")
-        print("  reset      - Reset session (new ID + clear history)")
-        print("  goal <text> - Run autonomous goal (e.g., 'goal Summarize all .md files into summary.md')")
-        print("  help       - Show this help message")
-        print(f"\nAvailable tools: {', '.join(self.chatbot.get_available_tools())}")
-        print("\nYou can ask the chatbot to read or write files within the current directory.")
-        print("Use 'goal' command for autonomous task execution with automatic tool usage.")
-        print("All requests are grouped by session ID for tracking in LiteLLM.")
+        commands = [
+            "quit       - Exit the chatbot",
+            "clear      - Clear conversation history",
+            "session    - Show session information",
+            "reset      - Reset session (new ID + clear history)",
+            "goal <text> - Run autonomous goal (e.g., 'goal Summarize all .md files into summary.md')",
+            "help       - Show this help message"
+        ]
+        self.logger.help_message(commands, self.chatbot.get_available_tools())
 
 
 async def main():
